@@ -23,6 +23,11 @@ def cosine_similarity(a, b):
 st.title("📚 AI Study Assistant")
 st.write("Upload PDFs and chat with them using AI!")
 
+# ---------- CHAT HISTORY ----------
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
 name = st.text_input("Enter your name:")
 
 if name:
@@ -113,6 +118,11 @@ if uploaded_file:
 
         st.write("Your question:", question)
 
+        st.session_state.chat_history.append({
+            "role": "user",
+            "message": question
+        })
+
         question_result = client.models.embed_content(
             model="gemini-embedding-001",
             contents=question
@@ -150,9 +160,10 @@ if uploaded_file:
 
         for index in top_indices:
 
-            relevant_chunks.append(
-                documents[index]["text"]
-            )
+            relevant_chunks.append({
+                "text": documents[index]["text"],
+                "score": similarities[index]
+            })
 
 
         # ---------- DISPLAY TOP 3 ----------
@@ -162,13 +173,15 @@ if uploaded_file:
         for i, chunk in enumerate(relevant_chunks):
 
             st.write(f"Chunk {i + 1}:")
-            st.write(chunk)
+            st.write("Similarity:", chunk["score"])
+            st.write(chunk["text"])
 
 
         # ---------- COMBINE TOP 3 CHUNKS ----------
 
         context = "\n\n".join(
-            relevant_chunks
+            chunk["text"]
+            for chunk in relevant_chunks
         )
 
 
@@ -189,11 +202,20 @@ say that you could not find the answer in the PDF.
 """
 
 
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt
-        )
+        # response = client.models.generate_content(
+        #     model="gemini-3.8-flash",
+        #     contents=prompt
+        # )
 
 
-        st.write("AI Answer:")
-        st.write(response.text)
+        # st.write("AI Answer:")
+        # st.write(response.text)
+        st.write("Context sent to AI:")
+        st.write(context)
+
+
+
+st.write("Chat History:")
+
+for chat in st.session_state.chat_history:
+    st.write(chat["role"], ":", chat["message"])
