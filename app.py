@@ -33,9 +33,112 @@ def cosine_similarity(a, b):
 # ---------- APP TITLE ----------
 
 st.title("📚 AI Study Assistant")
-st.write("Upload a PDF and ask questions about it using AI.")
 
 
+st.header("💼 Resume Analyzer")
+st.write("Upload your resume and get AI-powered feedback.")
+
+resume_file = st.file_uploader(
+    "Upload your resume",
+    type=["pdf"],
+    key="resume_uploader"
+)
+if resume_file:
+    st.success("Resume uploaded successfully!")
+    st.write(resume_file.name)
+
+    reader = PdfReader(resume_file)
+
+    resume_text = ""
+
+    for page in reader.pages:
+        page_text = page.extract_text()
+
+    if page_text:
+        resume_text += page_text + "\n"
+    
+    if not resume_text.strip():
+        st.error("Could not extract text from this resume.")
+        st.stop()
+
+    st.write("Resume text extracted successfully!")
+
+
+    prompt = f"""
+You are an AI career assistant.
+
+Analyze the following resume and provide useful, honest feedback.
+
+Resume:
+{resume_text}
+
+Give an overall resume score from 0 to 100 based on:
+- skills
+- projects
+- experience
+- clarity
+- relevance for internships/jobs
+
+Start your response with:
+
+Resume Score: <score>/100
+
+Explain briefly why you gave this score, considering:
+- Technical skills
+- Projects
+- Experience
+- Resume clarity
+- Relevance for internships/jobs
+
+Then give your analysis in the following sections:
+
+1. Skills
+- List the technical and soft skills found in the resume.
+
+2. Strengths
+- Identify the strongest parts of the resume.
+
+3. Weaknesses
+- Identify areas that could be improved.
+
+4. Recommended Skills
+- Suggest important skills the candidate could learn based on their current profile.
+
+5. Resume Improvements
+- Give specific suggestions to make the resume stronger for internships and jobs.
+
+Keep the analysis clear, practical, and based only on the information present in the resume.
+"""
+
+
+    if st.button("Analyze Resume"):
+
+        with st.spinner("Analyzing your resume..."):
+
+            try:
+
+                response = client.models.generate_content(
+                    model="gemini-3.5-flash",
+                    contents=prompt
+                )
+
+                analysis = response.text
+
+                st.subheader("📊 Resume Analysis")
+                st.markdown(analysis)
+
+            except Exception as e:
+
+                st.error(
+                    "Gemini is temporarily unavailable. "
+                    "Please try again later."
+                )
+
+                st.write(
+                    "Technical error:",
+                    str(e)
+                )
+ 
 # ---------- CHAT HISTORY ----------
 
 if "chat_history" not in st.session_state:
@@ -48,14 +151,13 @@ if st.button("Clear Chat"):
     st.session_state.chat_history = []
     st.rerun()
 
-
 # ---------- NAME ----------
 
 name = st.text_input("Enter your name:")
 
 if name:
     st.write(f"Welcome {name}! 🚀")
-
+st.write("Upload a PDF and ask questions about it using AI.")
 
 # ---------- PDF UPLOAD ----------
 
@@ -328,3 +430,6 @@ if st.session_state.chat_history:
         with st.chat_message(chat["role"]):
 
             st.write(chat["message"])
+
+for model in client.models.list():
+    print(model.name)
