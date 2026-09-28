@@ -32,8 +32,12 @@ def cosine_similarity(a, b):
 
 # ---------- APP TITLE ----------
 
-st.title("📚 AI Study Assistant")
-st.write("Upload a PDF and ask questions about it using AI.")
+st.title("🤖 AI Career Copilot")
+
+st.write(
+    "Your AI assistant for resumes, jobs, interview preparation, "
+    "and study support."
+)
 
 
 # ==========================================================
@@ -41,7 +45,10 @@ st.write("Upload a PDF and ask questions about it using AI.")
 # ==========================================================
 
 st.header("💼 Resume Analyzer")
-st.write("Upload your resume and get AI-powered feedback.")
+st.write(
+    "Upload your resume to analyze your skills, strengths, weaknesses, "
+    "and areas for improvement."
+)
 
 
 # ---------- RESUME UPLOAD ----------
@@ -166,16 +173,20 @@ Keep the analysis clear, practical, and based only on the information present in
 # ==========================================================
 
 st.header("🎯 Job Description Matcher")
-st.write("Compare your resume with a job description.")
+st.write(
+    "Add the job description you want to target. "
+    "You can paste it, upload a PDF, or provide a job posting URL."
+)
 
 
 # ---------- PASTE JOB DESCRIPTION ----------
-
+st.subheader("📝 Option 1: Paste Job Description")
 job_description = st.text_area(
     "Paste Job Description",
     height=250
 )
 # job description link
+st.subheader("🔗 Option 2: Job Posting URL")
 jd_link = st.text_input(
     "🔗 Or paste Job Description Link",
     placeholder="https://example.com/job"
@@ -230,7 +241,7 @@ if jd_link.strip():
 
 
 # ---------- JOB DESCRIPTION PDF ----------
-
+st.subheader("📄 Option 3: Upload Job Description PDF")
 job_pdf = st.file_uploader(
     "Or upload Job Description PDF",
     type=["pdf"],
@@ -315,10 +326,19 @@ if resume_text.strip() and jd_text.strip():
         jd_embedding
     )
 
-    st.subheader("🎯 Resume-JD Match Score")
+    st.subheader("🎯 Resume–Job Match")
 
-    st.write(
-        f"Semantic Match Score: {match_score:.2f}"
+    match_percentage = round(match_score * 100)
+
+    st.metric(
+        "Semantic Match",
+        f"{match_percentage}%"
+    )
+
+    st.caption(
+        "This score measures semantic similarity between your resume "
+        "and the job description. It is not an ATS score, hiring probability, "
+        "or guarantee of selection."
     )
     # ---------- GEMINI JOB MATCH ANALYSIS ----------
 
@@ -418,6 +438,18 @@ if st.button("Clear Chat"):
     st.rerun()
 
 
+
+
+
+# ==========================================================
+#                  AI STUDY ASSISTANT
+# ==========================================================
+
+# ---------- PDF UPLOAD ----------
+
+st.header("📚 AI Study Assistant")
+st.write("Upload study material and ask questions about it.")
+
 # ---------- NAME ----------
 
 name = st.text_input("Enter your name:")
@@ -427,15 +459,10 @@ if name:
     st.write(f"Welcome {name}! 🚀")
 
 
-# ==========================================================
-#                  AI STUDY ASSISTANT
-# ==========================================================
-
-# ---------- PDF UPLOAD ----------
-
 uploaded_file = st.file_uploader(
-    "Upload your PDF",
-    type=["pdf"]
+    "Upload Study Material PDF",
+    type=["pdf"],
+    key="study_pdf_uploader"
 )
 
 
@@ -722,3 +749,275 @@ if st.session_state.chat_history:
 
             st.write(chat["message"])
 
+
+
+
+# ---------- INTERVIEW PREP ----------
+
+st.header("🎤 Interview Prep")
+
+st.write(
+    "Generate personalized interview questions using your uploaded resume "
+    "and the current job description."
+)
+
+# Check whether the existing Resume and JD are available
+resume_available = bool(resume_text.strip())
+jd_available = bool(jd_text.strip())
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.write(
+        f"**Resume:** {'✅ Available' if resume_available else '❌ Not available'}"
+    )
+
+with col2:
+    st.write(
+        f"**Job Description:** {'✅ Available' if jd_available else '❌ Not available'}"
+    )
+
+generate_questions = st.button(
+    "🎯 Generate Interview Questions",
+    disabled=not (resume_available and jd_available)
+)
+
+if generate_questions:
+
+
+    interview_prompt = f"""
+You are an AI interview coach.
+
+Your task is to create a personalized interview preparation set
+for the candidate based ONLY on the candidate's resume and the
+provided job description.
+
+====================
+CANDIDATE RESUME
+====================
+
+{resume_text}
+
+====================
+JOB DESCRIPTION
+====================
+
+{jd_text}
+
+====================
+TASK
+====================
+
+First understand:
+1. The role and responsibilities from the job description.
+2. The important technical skills and requirements.
+3. The candidate's skills, projects, education, and experience from the resume.
+4. The overlap between the resume and the job requirements.
+5. Important job requirements that are not clearly demonstrated in the resume.
+
+Then generate exactly 5 personalized interview questions.
+
+Question distribution:
+
+1. Technical Question
+   - Based on an important technical requirement from the job description.
+   - Prefer something relevant to the candidate's demonstrated skills.
+
+2. Technical / Gap Question
+   - Based on an important job requirement that is weakly demonstrated
+     or not clearly demonstrated in the resume.
+   - Do not assume the candidate has this skill.
+
+3. Resume / Project Question
+   - Ask about a specific project, skill, education item, or experience
+     mentioned in the resume.
+   - The question should test the candidate's actual understanding.
+
+4. Behavioral Question
+   - Relevant to the responsibilities of the job.
+   - Keep it suitable for a student/intern candidate.
+
+5. HR / Motivation Question
+   - Relevant to the role and the candidate's background.
+   - Example areas include interest in the role, career goals,
+     learning ability, or motivation.
+
+For EACH question provide:
+
+Question:
+<question>
+
+Why this is asked:
+<what the interviewer is trying to evaluate>
+
+What to focus on:
+<short guidance on what the candidate should cover in their answer>
+
+Important rules:
+
+- Use BOTH the resume and job description.
+- Do not invent any project, skill, experience, achievement, or qualification.
+- Never claim that the candidate has a skill unless it appears in the resume.
+- If a requirement is missing from the resume, treat it as a gap rather than
+  pretending the candidate knows it.
+- Make questions specific to this candidate and this job.
+- Avoid generic questions that could apply to any candidate.
+- Keep the questions realistic for an internship/student interview.
+- Keep explanations concise and useful.
+"""
+
+    with st.spinner("Analyzing your resume and job description..."):
+
+        try:
+
+            response = client.models.generate_content(
+                model="gemini-3.8-flash",
+                contents=interview_prompt
+            )
+
+            st.subheader("📝 Personalized Interview Questions")
+
+            st.markdown(response.text)
+
+        except Exception as e:
+
+            st.error(
+                "Gemini is temporarily unavailable. Please try again."
+            )
+
+            st.write(
+                "Technical error:",
+                str(e)
+            )
+
+# ---------- RESUME IMPROVEMENT ----------
+
+st.header("✨ Resume Improvement")
+
+st.write(
+    "Get personalized resume improvement suggestions based on "
+    "your current resume and the selected job description."
+)
+
+resume_available = bool(resume_text.strip())
+jd_available = bool(jd_text.strip())
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.write(
+        f"**Resume:** {'✅ Available' if resume_available else '❌ Not available'}"
+    )
+
+with col2:
+    st.write(
+        f"**Job Description:** {'✅ Available' if jd_available else '❌ Not available'}"
+    )
+
+improve_resume = st.button(
+    "✨ Improve My Resume",
+    disabled=not (resume_available and jd_available)
+)
+
+if improve_resume:
+
+    resume_improvement_prompt = f"""
+You are an expert resume improvement assistant.
+
+Analyze the candidate's resume against the provided job description.
+
+====================
+CANDIDATE RESUME
+====================
+
+{resume_text}
+
+====================
+JOB DESCRIPTION
+====================
+
+{jd_text}
+
+====================
+TASK
+====================
+
+Identify how the candidate can improve their resume specifically
+for this job.
+
+Provide exactly these 4 sections:
+
+### 1. Missing or Weak Skills
+List important skills or requirements from the job description that
+are missing or weakly demonstrated in the resume.
+
+For each one:
+- Skill/requirement
+- Status: Missing / Weakly demonstrated
+- Recommendation
+
+Do NOT assume the candidate has a skill that is not present in the resume.
+
+### 2. Resume Bullet Improvements
+Identify up to 3 resume bullets or statements that could be improved.
+
+For each:
+- Current statement
+- Suggested improved version
+- Why it is better
+
+IMPORTANT:
+Only rewrite using information already present in the resume.
+Do not invent numbers, achievements, technologies, or experiences.
+
+### 3. Job-Specific Recommendations
+Give 3-5 specific recommendations for improving the resume
+for this particular job.
+
+Focus on:
+- Relevant skills
+- Projects
+- Technical terminology
+- Resume structure
+- Relevance to the job requirements
+
+### 4. Important Things NOT to Add
+Mention skills, experiences, or achievements from the job description
+that the candidate should NOT falsely add to their resume unless
+they genuinely have them.
+
+====================
+RULES
+====================
+
+- Use BOTH the resume and job description.
+- Do not invent information.
+- Do not exaggerate the candidate's experience.
+- Do not recommend adding a skill merely because it appears in the JD.
+- Keep recommendations practical for a student/intern.
+- Prioritize the most relevant improvements.
+"""
+
+    with st.spinner("Analyzing your resume for this job..."):
+
+        try:
+
+            response = client.models.generate_content(
+                model="gemini-3.5-flash",
+                contents=resume_improvement_prompt
+            )
+
+            st.subheader("✨ Resume Improvement Suggestions")
+
+            st.markdown(response.text)
+
+        except Exception as e:
+
+            st.error(
+                "Gemini is temporarily unavailable. Please try again."
+            )
+
+            st.write(
+                "Technical error:",
+                str(e)
+            )
