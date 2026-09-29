@@ -5,6 +5,11 @@ from google import genai
 from dotenv import load_dotenv
 import os
 import numpy as np
+import fitz
+import pytesseract
+from PIL import Image
+import io
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 
 # ---------- SETUP ----------
@@ -38,6 +43,364 @@ st.write(
     "Your AI assistant for resumes, jobs, interview preparation, "
     "and study support."
 )
+
+@st.cache_data
+def create_embeddings(chunks):
+
+    result = client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=chunks
+    )
+
+    return [
+        embedding.values
+        for embedding in result.embeddings
+    ]
+
+
+# ==========================================================
+#                  AI STUDY ASSISTANT
+# ==========================================================
+
+# ---------- CHAT HISTORY SETUP ----------
+
+if "chat_history" not in st.session_state:
+
+    st.session_state.chat_history = []
+
+
+# ---------- HEADER ----------
+
+st.header("📚 AI Study Assistant")
+st.write("Upload study material and ask questions about it.")
+
+
+# ---------- NAME ----------
+
+name = st.text_input("Enter your name:")
+
+if name:
+
+    st.write(f"Welcome {name}! 🚀")
+
+
+# ---------- PDF UPLOAD ----------
+
+uploaded_file = st.file_uploader(
+    "Upload Study Material PDF",
+    type=["pdf"],
+    key="study_pdf_uploader"
+)
+
+
+if uploaded_file:
+
+    st.write("PDF uploaded successfully!")
+    st.write(uploaded_file.name)
+
+# ---------- PDF → TEXT ----------
+
+    reader = PdfReader(uploaded_file)
+    text = ""
+
+# First try normal PDF text extraction
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
+
+# If no text was found, use OCR
+    if not text.strip():
+        st.info("No selectable text found. Running OCR...")
+
+        uploaded_file.seek(0)
+
+        pdf = fitz.open(
+            stream=uploaded_file.read(),
+            filetype="pdf"
+        )
+
+        ocr_text = []
+
+        for page in pdf:
+            pix = page.get_pixmap(dpi=200)
+
+            image = Image.open(
+                io.BytesIO(pix.tobytes("png"))
+            )
+
+            page_text = pytesseract.image_to_string(image)
+
+            if page_text:
+                ocr_text.append(page_text)
+
+        text = "\n".join(ocr_text)
+
+# Final check
+    if not text.strip():
+        st.error("Could not extract text from this PDF.")
+    else:
+        st.success("PDF text extracted successfully!")
+    
+
+
+        # ---------- TEXT → CHUNKS ----------
+
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=500,
+            chunk_overlap=50
+        )
+
+        chunks = splitter.split_text(text)
+        st.write("OCR text length:", len(text))
+        st.write("Number of chunks:", len(chunks))
+
+
+        # ---------- CHUNKS → EMBEDDINGS ----------
+
+        embeddings = create_embeddings(chunks)
+        
+        
+        # ---------- STORE CHUNK + EMBEDDING ----------
+
+        documents = []
+
+        for i in range(len(chunks)):
+
+            documents.append({
+                "text": chunks[i],
+                "embedding": embeddings[i]
+            })
+
+
+        # ---------- PDF INFORMATION ----------
+
+        st.write(
+            "Number of chunks:",
+            len(chunks)
+        )
+
+        st.write(
+            "Number of embeddings:",
+            len(embeddings)
+        )
+
+        st.write(
+            "Documents stored:",
+            len(documents)
+        )
+
+        if documents:
+
+            st.write(
+                "First embedding size:",
+                len(documents[0]["embedding"])
+            )
+
+
+        # ---------- USER QUESTION ----------
+
+        question = st.text_input(
+            "Ask a question about your PDF:"
+        )
+
+
+        # ---------- ASK BUTTON ----------
+
+        if st.button("Ask"):
+
+            if not question.strip():
+
+                st.warning(
+                    "Please enter a question first."
+                )
+
+            else:
+
+                # ---------- SAVE USER QUESTION ----------
+
+                st.session_state.chat_history.append({
+                    "role": "user",
+                    "message": question
+                })
+
+
+                # ---------- QUESTION → EMBEDDING ----------
+
+                question_result = client.models.embed_content(
+                    model="gemini-embedding-001",
+                    contents=question
+                )
+
+                question_embedding = (
+                    question_result.embeddings[0].values
+                )
+
+
+                # ---------- SIMILARITY ----------
+
+                similarities = []
+
+                for document in documents:
+
+                    score = cosine_similarity(
+                        question_embedding,
+                        document["embedding"]
+                    )
+
+                    similarities.append(score)
+
+
+                # ---------- TOP 3 RETRIEVAL ----------
+
+                top_k = min(
+                    3,
+                    len(documents)
+                )
+
+                top_indices = np.argsort(
+                    similarities
+                )[-top_k:][::-1]
+
+
+                relevant_chunks = []
+
+                for index in top_indices:
+
+                    relevant_chunks.append({
+                        "text": documents[index]["text"],
+                        "score": similarities[index]
+                    })
+
+
+                # ---------- DISPLAY TOP 3 ----------
+
+                st.write(
+                    "Top relevant chunks:"
+                )
+
+                for i, chunk in enumerate(
+                    relevant_chunks
+                ):
+
+                    st.write(
+                        f"Chunk {i + 1}:"
+                    )
+
+                    st.write(
+                        "Similarity:",
+                        chunk["score"]
+                    )
+
+                    st.write(
+                        chunk["text"]
+                    )
+
+
+                # ---------- COMBINE TOP 3 CHUNKS ----------
+
+                context = "\n\n".join(
+                    chunk["text"]
+                    for chunk in relevant_chunks
+                )
+
+
+                # ---------- PROMPT ----------
+
+                prompt = f"""
+You are an AI assistant that answers questions
+using information retrieved from a PDF.
+
+Use only the information provided in the PDF context.
+
+PDF context:
+{context}
+
+User question:
+{question}
+
+Instructions:
+- Answer clearly and simply.
+- Use the PDF context to answer.
+- Do not invent information.
+- If the answer is not present in the PDF context,
+  say that you could not find the answer in the PDF.
+"""
+
+
+                # ---------- GEMINI GENERATION ----------
+
+                try:
+
+                    response = client.models.generate_content(
+                        model="gemini-3.8-flash",
+                        contents=prompt
+                    )
+
+                    answer = response.text
+
+
+                    # ---------- SAVE AI ANSWER ----------
+
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "message": answer
+                    })
+
+
+                    # ---------- SHOW AI ANSWER ----------
+
+                    st.write("AI Answer:")
+                    st.write(answer)
+
+
+                except Exception as e:
+
+                    st.error(
+                        "Gemini is temporarily unavailable. "
+                        "Please try again in a few minutes."
+                    )
+
+                    st.write(
+                        "Technical error:",
+                        str(e)
+                    )
+
+
+                # ---------- SHOW CONTEXT ----------
+
+                with st.expander(
+                    "View retrieved context"
+                ):
+
+                    st.write(context)
+
+
+# ==========================================================
+#                    CHAT HISTORY
+# ==========================================================
+
+if st.session_state.chat_history:
+
+    st.subheader("💬 Chat History")
+
+
+    # ---------- CLEAR CHAT ----------
+
+    if st.button("Clear Chat"):
+
+        st.session_state.chat_history = []
+
+        st.rerun()
+
+
+    # ---------- DISPLAY CHAT HISTORY ----------
+
+    for chat in st.session_state.chat_history:
+
+        with st.chat_message(chat["role"]):
+
+            st.write(chat["message"])
 
 
 # ==========================================================
@@ -276,8 +639,7 @@ if job_pdf:
 
     
 
-
-# ---------- COMBINE JD INPUT ----------
+    # ---------- COMBINE JD INPUT ----------
 
 if job_description.strip():
 
@@ -294,6 +656,7 @@ elif jd_link.strip():
 else:
 
     jd_text = ""
+
 
 # ---------- RESUME + JD EMBEDDINGS ----------
 
@@ -419,338 +782,6 @@ if resume_text.strip() and jd_text.strip():
 
                 else:
                     st.error("Low match — the resume has limited alignment with this job.")
-
-# ==========================================================
-#                    CHAT HISTORY
-# ==========================================================
-
-if "chat_history" not in st.session_state:
-
-    st.session_state.chat_history = []
-
-
-# ---------- CLEAR CHAT ----------
-
-if st.button("Clear Chat"):
-
-    st.session_state.chat_history = []
-
-    st.rerun()
-
-
-
-
-
-# ==========================================================
-#                  AI STUDY ASSISTANT
-# ==========================================================
-
-# ---------- PDF UPLOAD ----------
-
-st.header("📚 AI Study Assistant")
-st.write("Upload study material and ask questions about it.")
-
-# ---------- NAME ----------
-
-name = st.text_input("Enter your name:")
-
-if name:
-
-    st.write(f"Welcome {name}! 🚀")
-
-
-uploaded_file = st.file_uploader(
-    "Upload Study Material PDF",
-    type=["pdf"],
-    key="study_pdf_uploader"
-)
-
-
-if uploaded_file:
-
-    st.write("PDF uploaded successfully!")
-    st.write(uploaded_file.name)
-
-
-    # ---------- PDF → TEXT ----------
-
-    reader = PdfReader(uploaded_file)
-
-    text = ""
-
-    for page in reader.pages:
-
-        page_text = page.extract_text()
-
-        if page_text:
-
-            text += page_text + "\n"
-
-
-    if not text.strip():
-
-        st.error(
-            "Could not extract text from this PDF."
-        )
-
-        st.stop()
-
-
-    # ---------- TEXT → CHUNKS ----------
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=50
-    )
-
-    chunks = splitter.split_text(text)
-
-
-    # ---------- CHUNKS → EMBEDDINGS ----------
-
-    embeddings = []
-
-    for chunk in chunks:
-
-        result = client.models.embed_content(
-            model="gemini-embedding-001",
-            contents=chunk
-        )
-
-        embeddings.append(
-            result.embeddings[0].values
-        )
-
-
-    # ---------- STORE CHUNK + EMBEDDING ----------
-
-    documents = []
-
-    for i in range(len(chunks)):
-
-        documents.append({
-            "text": chunks[i],
-            "embedding": embeddings[i]
-        })
-
-
-    # ---------- PDF INFORMATION ----------
-
-    st.write(
-        "Number of chunks:",
-        len(chunks)
-    )
-
-    st.write(
-        "Number of embeddings:",
-        len(embeddings)
-    )
-
-    st.write(
-        "Documents stored:",
-        len(documents)
-    )
-
-    st.write(
-        "First embedding size:",
-        len(documents[0]["embedding"])
-    )
-
-
-    # ---------- USER QUESTION ----------
-
-    question = st.text_input(
-        "Ask a question about your PDF:"
-    )
-
-
-    # ---------- ASK BUTTON ----------
-
-    if st.button("Ask"):
-
-        if not question.strip():
-
-            st.warning(
-                "Please enter a question first."
-            )
-
-        else:
-
-            # ---------- SAVE USER QUESTION ----------
-
-            st.session_state.chat_history.append({
-                "role": "user",
-                "message": question
-            })
-
-
-            # ---------- QUESTION → EMBEDDING ----------
-
-            question_result = client.models.embed_content(
-                model="gemini-embedding-001",
-                contents=question
-            )
-
-            question_embedding = (
-                question_result.embeddings[0].values
-            )
-
-
-            # ---------- SIMILARITY ----------
-
-            similarities = []
-
-            for document in documents:
-
-                score = cosine_similarity(
-                    question_embedding,
-                    document["embedding"]
-                )
-
-                similarities.append(score)
-
-
-            # ---------- TOP 3 RETRIEVAL ----------
-
-            top_k = min(
-                3,
-                len(documents)
-            )
-
-            top_indices = np.argsort(
-                similarities
-            )[-top_k:][::-1]
-
-
-            relevant_chunks = []
-
-            for index in top_indices:
-
-                relevant_chunks.append({
-                    "text": documents[index]["text"],
-                    "score": similarities[index]
-                })
-
-
-            # ---------- DISPLAY TOP 3 ----------
-
-            st.write(
-                "Top relevant chunks:"
-            )
-
-            for i, chunk in enumerate(
-                relevant_chunks
-            ):
-
-                st.write(
-                    f"Chunk {i + 1}:"
-                )
-
-                st.write(
-                    "Similarity:",
-                    chunk["score"]
-                )
-
-                st.write(
-                    chunk["text"]
-                )
-
-
-            # ---------- COMBINE TOP 3 CHUNKS ----------
-
-            context = "\n\n".join(
-                chunk["text"]
-                for chunk in relevant_chunks
-            )
-
-
-            # ---------- PROMPT ----------
-
-            prompt = f"""
-You are an AI assistant that answers questions
-using information retrieved from a PDF.
-
-Use only the information provided in the PDF context.
-
-PDF context:
-{context}
-
-User question:
-{question}
-
-Instructions:
-- Answer clearly and simply.
-- Use the PDF context to answer.
-- Do not invent information.
-- If the answer is not present in the PDF context,
-  say that you could not find the answer in the PDF.
-"""
-
-
-            # ---------- GEMINI GENERATION ----------
-
-            try:
-
-                response = client.models.generate_content(
-                    model="gemini-3.8-flash",
-                    contents=prompt
-                )
-
-                answer = response.text
-
-
-                # ---------- SAVE AI ANSWER ----------
-
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "message": answer
-                })
-
-
-                # ---------- SHOW AI ANSWER ----------
-
-                st.write("AI Answer:")
-                st.write(answer)
-
-
-            except Exception as e:
-
-                st.error(
-                    "Gemini is temporarily unavailable. "
-                    "Please try again in a few minutes."
-                )
-
-                st.write(
-                    "Technical error:",
-                    str(e)
-                )
-
-
-            # ---------- SHOW CONTEXT ----------
-
-            with st.expander(
-                "View retrieved context"
-            ):
-
-                st.write(context)
-
-
-# ==========================================================
-#                    DISPLAY CHAT HISTORY
-# ==========================================================
-
-if st.session_state.chat_history:
-
-    st.subheader("Chat History")
-
-    for chat in st.session_state.chat_history:
-
-        with st.chat_message(chat["role"]):
-
-            st.write(chat["message"])
-
-
-
 
 # ---------- INTERVIEW PREP ----------
 
